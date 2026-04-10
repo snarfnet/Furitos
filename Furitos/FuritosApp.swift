@@ -4,7 +4,7 @@ import GoogleMobileAds
 @main
 struct FuritosApp: App {
     init() {
-        GADMobileAds.sharedInstance().start(completionHandler: nil)
+        MobileAds.shared.start()
     }
 
     var body: some Scene {
