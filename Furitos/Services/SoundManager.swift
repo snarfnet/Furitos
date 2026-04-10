@@ -122,212 +122,154 @@ enum WaveformType {
     case sine, square, sawtooth, noise
 }
 
-// MARK: - Heavy Metal BGM Engine
+// MARK: - Heavy Metal BGM Engine (Pre-rendered loop)
 class BGMManager {
     static let shared = BGMManager()
 
     private var audioEngine = AVAudioEngine()
-    private var mixerNode = AVAudioMixerNode()
+    private var playerNode = AVAudioPlayerNode()
     private var isPlaying = false
-    private var bgmTimer: Timer?
-    private let bpm: Double = 180 // Fast heavy metal tempo
-    private var beatIndex = 0
+    private let sampleRate: Float = 44100
+    private let bpm: Float = 180
 
     private init() {
-        audioEngine.attach(mixerNode)
-        mixerNode.outputVolume = 0.5
-        audioEngine.connect(mixerNode, to: audioEngine.mainMixerNode, format: nil)
+        audioEngine.attach(playerNode)
+        audioEngine.connect(playerNode, to: audioEngine.mainMixerNode,
+                           format: AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!)
     }
 
     func start() {
         guard !isPlaying else { return }
         isPlaying = true
+
+        let buffer = renderLoop()
         try? audioEngine.start()
-        beatIndex = 0
-        let interval = 60.0 / bpm / 2.0 // 16th note speed
-        bgmTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.playBeat()
-        }
+        playerNode.scheduleBuffer(buffer, at: nil, options: .loops)
+        playerNode.volume = 0.5
+        playerNode.play()
     }
 
     func stop() {
+        guard isPlaying else { return }
         isPlaying = false
-        bgmTimer?.invalidate()
-        bgmTimer = nil
+        playerNode.stop()
         audioEngine.stop()
     }
 
-    private func playBeat() {
-        let beat = beatIndex % 32
+    // Pre-render the entire 2-bar loop into one buffer
+    private func renderLoop() -> AVAudioPCMBuffer {
+        let beatDuration = 60.0 / bpm / 2.0 // 16th note
+        let totalBeats = 32
+        let totalDuration = beatDuration * Float(totalBeats)
+        let frameCount = AVAudioFrameCount(sampleRate * totalDuration)
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let data = buffer.floatChannelData![0]
 
-        // Heavy metal Korobeiniki (Tetris theme) - power chord version
-        // E minor pentatonic riff pattern
+        // Zero fill
+        for i in 0..<Int(frameCount) { data[i] = 0 }
+
+        // Melody pattern: Korobeiniki (Tetris theme)
         let melodyPattern: [(Float, Bool)] = [
-            // Bar 1: E4-B3-C4-D4-C4-B3-A3-A3
             (329.63, true), (0, false), (246.94, true), (0, false),
             (261.63, true), (0, false), (293.66, true), (293.66, true),
             (261.63, true), (0, false), (246.94, true), (0, false),
             (220.00, true), (0, false), (220.00, true), (0, false),
-            // Bar 2: A3-C4-E4-D4-C4-B3-B3-C4
             (220.00, true), (0, false), (261.63, true), (0, false),
             (329.63, true), (0, false), (293.66, true), (293.66, true),
             (261.63, true), (0, false), (246.94, true), (0, false),
             (246.94, true), (0, false), (261.63, true), (0, false),
         ]
 
-        let (freq, play) = melodyPattern[beat]
+        for beat in 0..<totalBeats {
+            let beatStart = Int(Float(beat) * beatDuration * sampleRate)
+            let noteDuration = Int(beatDuration * sampleRate * 0.8)
 
-        // Distorted power chord melody
-        if play {
-            playDistorted(frequency: freq, duration: 0.08, volume: 0.35)
-            // Power chord: add fifth
-            playDistorted(frequency: freq * 1.5, duration: 0.08, volume: 0.2)
+            let (freq, play) = melodyPattern[beat]
+
+            // Distorted power chord melody
+            if play {
+                mixDistorted(into: data, at: beatStart, duration: noteDuration, frequency: freq, volume: 0.35)
+                mixDistorted(into: data, at: beatStart, duration: noteDuration, frequency: freq * 1.5, volume: 0.2)
+            }
+
+            // Kick on every 4th
+            if beat % 4 == 0 {
+                mixDrum(into: data, at: beatStart, duration: Int(0.1 * sampleRate), frequency: 55, volume: 0.6)
+            }
+
+            // Snare on every 4th offset 2
+            if beat % 4 == 2 {
+                mixSnare(into: data, at: beatStart, duration: Int(0.08 * sampleRate), volume: 0.4)
+            }
+
+            // Double bass
+            if beat % 2 == 0 {
+                mixDrum(into: data, at: beatStart, duration: Int(0.05 * sampleRate), frequency: 45, volume: 0.3)
+            }
+
+            // Hi-hat every beat
+            mixNoise(into: data, at: beatStart, duration: Int(0.03 * sampleRate), volume: 0.15)
         }
 
-        // Kick drum on every 4th beat
-        if beat % 4 == 0 {
-            playDrum(frequency: 55, duration: 0.1, volume: 0.6)
+        // Clamp to prevent clipping
+        for i in 0..<Int(frameCount) {
+            data[i] = max(-1.0, min(1.0, data[i]))
         }
 
-        // Snare on every 4th beat offset by 2
-        if beat % 4 == 2 {
-            playSnare(volume: 0.4)
-        }
-
-        // Double bass drum pattern (every other 16th note for heaviness)
-        if beat % 2 == 0 {
-            playDrum(frequency: 45, duration: 0.05, volume: 0.3)
-        }
-
-        // Hi-hat on every beat
-        playHiHat(volume: 0.15)
-
-        beatIndex += 1
+        return buffer
     }
 
-    private func playDistorted(frequency: Float, duration: Float, volume: Float) {
-        let sampleRate: Float = 44100
-        let frameCount = AVAudioFrameCount(sampleRate * duration)
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!,
-            frameCapacity: frameCount
-        ) else { return }
-        buffer.frameLength = frameCount
-        let data = buffer.floatChannelData![0]
-
-        for i in 0..<Int(frameCount) {
+    private func mixDistorted(into data: UnsafeMutablePointer<Float>, at offset: Int, duration: Int, frequency: Float, volume: Float) {
+        for i in 0..<duration {
+            let idx = offset + i
+            guard idx < Int(sampleRate * 60.0 / bpm / 2.0 * 32) else { break }
             let t = Float(i) / sampleRate
-            // Layered distortion: square + sawtooth + overtones
             var sample = sin(2 * Float.pi * frequency * t)
-            sample += 0.5 * (2 * (t * frequency - floor(t * frequency + 0.5))) // sawtooth
-            sample += 0.3 * (sin(2 * Float.pi * frequency * 2 * t) > 0 ? 1.0 : -1.0) // octave square
-            // Hard clip distortion
+            sample += 0.5 * (2 * (t * frequency - floor(t * frequency + 0.5)))
+            sample += 0.3 * (sin(2 * Float.pi * frequency * 2 * t) > 0 ? 1.0 : -1.0)
             sample = max(-0.8, min(0.8, sample * 2.5))
-            // Envelope
-            let env = min(Float(i) / (sampleRate * 0.005), 1.0 - max(0, (Float(i) / sampleRate - 0.005) / (duration - 0.005)))
-            data[i] = sample * max(0, env) * volume
+            let env = min(Float(i) / (sampleRate * 0.005), 1.0 - max(0, (Float(i) / sampleRate - 0.005) / (Float(duration) / sampleRate - 0.005)))
+            data[idx] += sample * max(0, env) * volume
         }
-
-        let player = AVAudioPlayerNode()
-        audioEngine.attach(player)
-        audioEngine.connect(player, to: mixerNode, format: buffer.format)
-        player.scheduleBuffer(buffer) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.audioEngine.detach(player)
-            }
-        }
-        if !audioEngine.isRunning { try? audioEngine.start() }
-        player.play()
     }
 
-    private func playDrum(frequency: Float, duration: Float, volume: Float) {
-        let sampleRate: Float = 44100
-        let frameCount = AVAudioFrameCount(sampleRate * duration)
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!,
-            frameCapacity: frameCount
-        ) else { return }
-        buffer.frameLength = frameCount
-        let data = buffer.floatChannelData![0]
-
-        for i in 0..<Int(frameCount) {
+    private func mixDrum(into data: UnsafeMutablePointer<Float>, at offset: Int, duration: Int, frequency: Float, volume: Float) {
+        for i in 0..<duration {
+            let idx = offset + i
+            guard idx < Int(sampleRate * 60.0 / bpm / 2.0 * 32) else { break }
             let t = Float(i) / sampleRate
-            let pitchDrop = frequency * (1.0 - t / duration * 0.8)
+            let dur = Float(duration) / sampleRate
+            let pitchDrop = frequency * (1.0 - t / dur * 0.8)
             let sample = sin(2 * Float.pi * pitchDrop * t)
-            let env = 1.0 - t / duration
-            data[i] = sample * env * env * volume
+            let env = 1.0 - t / dur
+            data[idx] += sample * env * env * volume
         }
-
-        let player = AVAudioPlayerNode()
-        audioEngine.attach(player)
-        audioEngine.connect(player, to: mixerNode, format: buffer.format)
-        player.scheduleBuffer(buffer) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.audioEngine.detach(player)
-            }
-        }
-        if !audioEngine.isRunning { try? audioEngine.start() }
-        player.play()
     }
 
-    private func playSnare(volume: Float) {
-        let sampleRate: Float = 44100
-        let duration: Float = 0.08
-        let frameCount = AVAudioFrameCount(sampleRate * duration)
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!,
-            frameCapacity: frameCount
-        ) else { return }
-        buffer.frameLength = frameCount
-        let data = buffer.floatChannelData![0]
-
-        for i in 0..<Int(frameCount) {
+    private func mixSnare(into data: UnsafeMutablePointer<Float>, at offset: Int, duration: Int, volume: Float) {
+        for i in 0..<duration {
+            let idx = offset + i
+            guard idx < Int(sampleRate * 60.0 / bpm / 2.0 * 32) else { break }
             let t = Float(i) / sampleRate
+            let dur = Float(duration) / sampleRate
             let noise = Float.random(in: -1...1)
             let tone = sin(2 * Float.pi * 200 * t)
-            let env = 1.0 - t / duration
-            data[i] = (noise * 0.7 + tone * 0.3) * env * env * volume
+            let env = 1.0 - t / dur
+            data[idx] += (noise * 0.7 + tone * 0.3) * env * env * volume
         }
-
-        let player = AVAudioPlayerNode()
-        audioEngine.attach(player)
-        audioEngine.connect(player, to: mixerNode, format: buffer.format)
-        player.scheduleBuffer(buffer) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.audioEngine.detach(player)
-            }
-        }
-        if !audioEngine.isRunning { try? audioEngine.start() }
-        player.play()
     }
 
-    private func playHiHat(volume: Float) {
-        let sampleRate: Float = 44100
-        let duration: Float = 0.03
-        let frameCount = AVAudioFrameCount(sampleRate * duration)
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!,
-            frameCapacity: frameCount
-        ) else { return }
-        buffer.frameLength = frameCount
-        let data = buffer.floatChannelData![0]
-
-        for i in 0..<Int(frameCount) {
+    private func mixNoise(into data: UnsafeMutablePointer<Float>, at offset: Int, duration: Int, volume: Float) {
+        for i in 0..<duration {
+            let idx = offset + i
+            guard idx < Int(sampleRate * 60.0 / bpm / 2.0 * 32) else { break }
             let t = Float(i) / sampleRate
+            let dur = Float(duration) / sampleRate
             let noise = Float.random(in: -1...1)
-            let env = 1.0 - t / duration
-            data[i] = noise * env * env * env * volume
+            let env = 1.0 - t / dur
+            data[idx] += noise * env * env * env * volume
         }
-
-        let player = AVAudioPlayerNode()
-        audioEngine.attach(player)
-        audioEngine.connect(player, to: mixerNode, format: buffer.format)
-        player.scheduleBuffer(buffer) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                self.audioEngine.detach(player)
-            }
-        }
-        if !audioEngine.isRunning { try? audioEngine.start() }
-        player.play()
     }
 }
