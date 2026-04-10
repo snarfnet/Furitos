@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>GADApplicationIdentifier</key>
+    <string>ca-app-pub-3940256099942544~1458002511</string>
+    <key>SKAdNetworkItems</key>
+    <array>
+        <dict>
+            <key>SKAdNetworkIdentifier</key>
+            <string>cstr6suwn9.skadnetwork</string>
+        </dict>
+    </array>
+    <key>NSMotionUsageDescription</key>
+    <string>Motion data is used to control gravity direction for falling blocks</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <key>UIRequiresFullScreen</key>
+    <true/>
+</dict>
+</plist>
