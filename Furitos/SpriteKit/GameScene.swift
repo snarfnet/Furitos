@@ -139,6 +139,9 @@ class GameScene: SKScene {
         gyroManager.onGravityChanged = { [weak self] direction in
             self?.gravityChanged(to: direction)
         }
+        gyroManager.onShake = { [weak self] in
+            self?.rotatePiece()
+        }
         gyroManager.start()
     }
 

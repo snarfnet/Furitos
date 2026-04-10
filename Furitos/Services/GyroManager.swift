@@ -13,20 +13,47 @@ class GyroManager: ObservableObject {
     private let threshold: Double = 0.4
 
     var onGravityChanged: ((GravityDirection) -> Void)?
+    var onShake: (() -> Void)?
 
     var gravityDirection: GravityDirection { currentDirection }
 
+    // Shake detection
+    private var lastShakeTime: TimeInterval = 0
+    private let shakeCooldown: TimeInterval = 0.4
+    private let shakeThreshold: Double = 2.5
+    private var prevAccel: CMAcceleration?
+
     func start() {
         guard motionManager.isAccelerometerAvailable else { return }
-        motionManager.accelerometerUpdateInterval = 0.05
+        motionManager.accelerometerUpdateInterval = 0.03
         motionManager.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
             guard let self = self, let data = data else { return }
             self.processAcceleration(data.acceleration)
+            self.detectShake(data.acceleration)
         }
     }
 
     func stop() {
         motionManager.stopAccelerometerUpdates()
+        prevAccel = nil
+    }
+
+    private func detectShake(_ acc: CMAcceleration) {
+        guard let prev = prevAccel else {
+            prevAccel = acc
+            return
+        }
+        let dx = acc.x - prev.x
+        let dy = acc.y - prev.y
+        let dz = acc.z - prev.z
+        let jerk = sqrt(dx * dx + dy * dy + dz * dz)
+        prevAccel = acc
+
+        let now = Date().timeIntervalSince1970
+        if jerk > shakeThreshold && now - lastShakeTime > shakeCooldown {
+            lastShakeTime = now
+            onShake?()
+        }
     }
 
     private func processAcceleration(_ acc: CMAcceleration) {
