@@ -143,9 +143,42 @@ class GameScene: SKScene {
     }
 
     private func gravityChanged(to direction: GravityDirection) {
+        let oldDir = gravityDir
         gravityDir = direction
         // Redraw ghost with new gravity
         updateGhost()
+        // Shake landed blocks when gravity changes
+        if oldDir != direction {
+            shakeSettledBlocks(toward: direction)
+        }
+    }
+
+    private func shakeSettledBlocks(toward direction: GravityDirection) {
+        let dx: CGFloat
+        let dy: CGFloat
+        switch direction {
+        case .down:  dx = 0;  dy = -2.5
+        case .up:    dx = 0;  dy = 2.5
+        case .left:  dx = -2.5; dy = 0
+        case .right: dx = 2.5;  dy = 0
+        }
+        for r in 0..<gridRows {
+            for c in 0..<gridCols {
+                if let node = blockNodes[r][c] {
+                    let jitter = CGFloat.random(in: 0.5...1.5)
+                    let delay = Double.random(in: 0...0.05)
+                    node.run(SKAction.sequence([
+                        SKAction.wait(forDuration: delay),
+                        SKAction.moveBy(x: dx * jitter, y: dy * jitter, duration: 0.04),
+                        SKAction.moveBy(x: -dx * jitter * 0.6, y: -dy * jitter * 0.6, duration: 0.04),
+                        SKAction.moveBy(x: dx * jitter * 0.2, y: dy * jitter * 0.2, duration: 0.03),
+                        SKAction.moveBy(x: -dx * jitter * 0.2 + dx * jitter * 0.6 - dx * jitter,
+                                        y: -dy * jitter * 0.2 + dy * jitter * 0.6 - dy * jitter,
+                                        duration: 0.03)
+                    ]))
+                }
+            }
+        }
     }
 
     // MARK: - Gestures
